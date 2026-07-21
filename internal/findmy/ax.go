@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type AXFrame struct {
@@ -320,22 +321,42 @@ func ResolveDevice(devices []Device, query string) (*Device, error) {
 	if query == "" {
 		return nil, fmt.Errorf("device name is required")
 	}
-	var exact, partial []*Device
+	queryKey := deviceMatchKey(query)
+	queryLower := strings.ToLower(query)
+	var exact, separatorInsensitive, partial []*Device
 	for i := range devices {
 		name := strings.TrimSpace(devices[i].Name)
 		if strings.EqualFold(name, query) {
 			exact = append(exact, &devices[i])
-		} else if strings.Contains(strings.ToLower(name), strings.ToLower(query)) {
+		}
+		if queryKey != "" && strings.HasPrefix(deviceMatchKey(name), queryKey) {
+			separatorInsensitive = append(separatorInsensitive, &devices[i])
+		}
+		if strings.Contains(strings.ToLower(name), queryLower) {
 			partial = append(partial, &devices[i])
 		}
 	}
-	matches := partial
-	if len(exact) > 0 {
-		matches = exact
+	for _, matches := range [][]*Device{exact, separatorInsensitive, partial} {
+		if len(matches) == 0 {
+			continue
+		}
+		return resolveUniqueDeviceTier(query, matches)
 	}
+	return nil, fmt.Errorf("no device matching %q", query)
+}
+
+func deviceMatchKey(value string) string {
+	var key strings.Builder
+	for _, r := range value {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			key.WriteRune(unicode.ToLower(r))
+		}
+	}
+	return key.String()
+}
+
+func resolveUniqueDeviceTier(query string, matches []*Device) (*Device, error) {
 	switch len(matches) {
-	case 0:
-		return nil, fmt.Errorf("no device matching %q", query)
 	case 1:
 		return matches[0], nil
 	default:

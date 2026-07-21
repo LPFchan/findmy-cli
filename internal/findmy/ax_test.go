@@ -95,3 +95,30 @@ func TestResolveDeviceUniqueAndAmbiguous(t *testing.T) {
 		t.Fatalf("ResolveDevice duplicate exact error = %v", err)
 	}
 }
+
+func TestResolveDeviceTierPrecedenceAndSeparatorFallback(t *testing.T) {
+	devices := []Device{
+		{Name: "yeowool_phone, status"},
+		{Name: "Other Phone"},
+	}
+	match, err := ResolveDevice(devices, "yeowoolphone")
+	if err != nil || match.Name != devices[0].Name {
+		t.Fatalf("ResolveDevice separator fallback = %#v, %v", match, err)
+	}
+
+	exactPreferred := []Device{{Name: "My-Phone"}, {Name: "My Phone Extra"}}
+	match, err = ResolveDevice(exactPreferred, "my-phone")
+	if err != nil || match.Name != "My-Phone" {
+		t.Fatalf("ResolveDevice exact tier = %#v, %v", match, err)
+	}
+
+	ambiguous := []Device{{Name: "Work_Phone"}, {Name: "Work-Phone Backup"}}
+	if _, err := ResolveDevice(ambiguous, "workphone"); err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("ResolveDevice fallback ambiguity error = %v", err)
+	}
+
+	partial, err := ResolveDevice(devices, "Other")
+	if err != nil || partial.Name != "Other Phone" {
+		t.Fatalf("ResolveDevice partial tier = %#v, %v", partial, err)
+	}
+}
