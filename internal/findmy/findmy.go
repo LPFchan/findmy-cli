@@ -9,20 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 )
-
-type Window struct {
-	PID      int    `json:"pid"`
-	WindowID int    `json:"windowID"`
-	Layer    int    `json:"layer"`
-	Title    string `json:"title"`
-	X        int    `json:"x"`
-	Y        int    `json:"y"`
-	Width    int    `json:"width"`
-	Height   int    `json:"height"`
-	OnScreen bool   `json:"onScreen"`
-}
 
 type TextLine struct {
 	Text       string  `json:"text"`
@@ -87,17 +74,11 @@ func runHelper(args ...string) ([]byte, error) {
 }
 
 type Permissions struct {
-	ScreenRecording bool `json:"screenRecording"`
-	Accessibility   bool `json:"accessibility"`
+	Accessibility bool `json:"accessibility"`
 }
 
-// CheckPermissions returns nil when both Screen Recording (for screencapture)
-// and Accessibility / event-posting (for CGEvent clicks) are granted to the
-// helper binary. It uses the helper's `permissions` subcommand, which probes
-// via SCShareableContent rather than trusting CGPreflight*Access alone — TCC
-// state is often stale for CLI binaries across rebuilds, and the preflight
-// calls return false-negatives that would otherwise cause screencapture to
-// hang or click to silently no-op.
+// CheckPermissions reports the Accessibility grant used to inspect and act on
+// Find My's accessibility tree. Screen Recording is not required.
 func CheckPermissions() (Permissions, error) {
 	out, err := runHelper("permissions")
 	if err != nil {
@@ -110,169 +91,30 @@ func CheckPermissions() (Permissions, error) {
 	return p, nil
 }
 
-func requirePermissions(needClick bool) error {
+func requireAccessibility() error {
 	p, err := CheckPermissions()
 	if err != nil {
 		return err
 	}
-	var missing []string
-	if !p.ScreenRecording {
-		missing = append(missing, "Screen Recording")
-	}
-	if needClick && !p.Accessibility {
-		missing = append(missing, "Accessibility")
-	}
-	if len(missing) == 0 {
+	if p.Accessibility {
 		return nil
 	}
 	return fmt.Errorf(
-		"missing permission(s) for the host process: %s. Grant in System Settings → Privacy & Security → %s, then fully quit and relaunch this terminal (TCC is read once at process start).",
-		strings.Join(missing, ", "), strings.Join(missing, " / "),
+		"missing Accessibility permission for findmy-helper. Grant that helper executable in System Settings → Privacy & Security → Accessibility, then relaunch the calling application",
 	)
 }
 
 func Activate() error {
-	script := `tell application "FindMy" to activate`
-	return exec.Command("osascript", "-e", script).Run()
+	return exec.Command("open", "-b", "com.apple.findmy").Run()
 }
 
 func SwitchTab(name string) error {
-	ls := GetAppStrings()
-	script := fmt.Sprintf(
-		`tell application "System Events" to tell process "FindMy" to click menu item %q of menu %q of menu bar 1`,
-		name, ls.ViewMenu,
-	)
-	return exec.Command("osascript", "-e", script).Run()
-}
-
-func MainWindow() (*Window, error) {
-	ls := GetAppStrings()
-	out, err := runHelper("window", "--owner", ls.WindowOwner)
-	if err != nil {
-		return nil, fmt.Errorf("helper window: %w", err)
-	}
-	var wins []Window
-	if err := json.Unmarshal(out, &wins); err != nil {
-		return nil, fmt.Errorf("decode windows: %w", err)
-	}
-	for _, w := range wins {
-		if w.Layer == 0 && w.OnScreen && w.Height > 100 {
-			return &w, nil
-		}
-	}
-	return nil, fmt.Errorf("no visible %s window (open the app first)", ls.WindowOwner)
-}
-
-// Capture writes the FindMy window's content to dest using `screencapture -l`,
-// which targets the window by ID and captures actual content rather than the
-// screen rect. Region capture (`-R x,y,w,h`) would grab whatever is topmost at
-// those coordinates and pollute the OCR with terminal/desktop content when
-// FindMy isn't strictly frontmost.
-//
-// Capture fails with a friendly error when the display is asleep or the
-// window's backing store hasn't been populated yet (Catalyst quirk after
-// rapid focus changes). Both produce "could not create image from window"
-// or a tiny all-black PNG.
-func Capture(w *Window, dest string) error {
-	cmd := exec.Command("/usr/sbin/screencapture", "-x", "-l", fmt.Sprintf("%d", w.WindowID), "-t", "png", dest)
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return diagnoseCaptureFailure(err)
-	}
-	if info, err := os.Stat(dest); err == nil && info.Size() < 5_000 {
-		return fmt.Errorf("captured image suspiciously small (%d bytes); display may be asleep — wake it with the keyboard", info.Size())
-	}
-	return nil
-}
-
-func diagnoseCaptureFailure(err error) error {
-	if isDisplayAsleep() {
-		return fmt.Errorf("display is asleep; wake it with the keyboard and re-run (%w)", err)
-	}
-	return fmt.Errorf("screencapture: %w (FindMy may not be fully painted; try again or click into FindMy first)", err)
-}
-
-func isDisplayAsleep() bool {
-	out, err := exec.Command("ioreg", "-c", "IODisplayWrangler").Output()
-	if err != nil {
-		return false
-	}
-	return strings.Contains(string(out), `"CurrentPowerState" = 1`) ||
-		strings.Contains(string(out), `"CurrentPowerState" = 0`)
-}
-
-func OCR(image string) ([]TextLine, error) {
-	out, err := runHelper("ocr", image)
-	if err != nil {
-		return nil, fmt.Errorf("helper ocr: %w", err)
-	}
-	var lines []TextLine
-	if err := json.Unmarshal(out, &lines); err != nil {
-		return nil, fmt.Errorf("decode ocr: %w", err)
-	}
-	return lines, nil
-}
-
-func Click(x, y int) error {
-	_, err := runHelper("click", fmt.Sprintf("%d", x), fmt.Sprintf("%d", y))
+	_, err := runHelper("select-tab", "--label", name)
 	return err
 }
 
-// wakeDisplay nudges the display awake by holding a 3-second user-activity
-// assertion. Needed for headless / closed-lid use with a dummy USB-C display:
-// the dummy plug enables clamshell mode but macOS still idle-sleeps it, and
-// WindowServer stops compositing when its only display is asleep — which
-// makes `screencapture -l <windowID>` return "could not create image from
-// window". We fire-and-forget; caffeinate self-terminates after 3s, which
-// covers PreparePeople's ~2s of activate+sleep before the capture.
-func wakeDisplay() {
-	cmd := exec.Command("caffeinate", "-u", "-t", "3")
-	if err := cmd.Start(); err == nil {
-		go func() { _ = cmd.Wait() }()
-	}
-}
-
-// PreparePeople activates FindMy, raises it strictly frontmost (so the
-// People sidebar is fully painted into the bitmap captured by `screencapture
-// -l`), and selects the People tab via the View menu. Returns the window's
-// metadata for capture targeting. Fails fast if the host process is missing
-// the Screen Recording grant, rather than letting screencapture hang.
-func PreparePeople() (*Window, error) {
-	return prepareTab(GetAppStrings().PeopleTab)
-}
-
-// PrepareDevices is the Devices-tab mirror of PreparePeople. Demitri's own
-// Apple devices (iPhone, iPad, Mac, AirPods, Apple Watch) live in this tab,
-// which the People tab cannot see — so this is the path for "where is my
-// phone" / "where are my AirPods" queries on his own iCloud.
-func PrepareDevices() (*Window, error) {
-	return prepareTab(GetAppStrings().DevicesTab)
-}
-
-// PrepareItems is the Items-tab mirror of PrepareDevices. AirTags, AirPods
-// cases, and third-party Find My network trackers live in this tab.
-func PrepareItems() (*Window, error) {
-	return prepareTab(GetAppStrings().ItemsTab)
-}
-
-func prepareTab(tab string) (*Window, error) {
-	if err := requirePermissions(false); err != nil {
-		return nil, err
-	}
-	wakeDisplay()
-	if err := Activate(); err != nil {
-		return nil, err
-	}
-	time.Sleep(900 * time.Millisecond)
-	frontScript := `tell application "System Events" to tell process "FindMy" to set frontmost to true`
-	_ = exec.Command("osascript", "-e", frontScript).Run()
-	_ = SwitchTab(tab)
-	time.Sleep(1100 * time.Millisecond)
-	return MainWindow()
-}
-
 // RequireSidebarVisible returns an error when the People/Devices/Items
-// segmented control is missing from the OCR output, which happens when the
+// segmented control is missing from normalized UI text, which happens when the
 // user has hidden the sidebar (View → Hide Sidebar, or the toggle button).
 // Without this gate the sidebar parsers see only map content and can yield
 // nonsense rows pulled from map labels (place names, road names) rather than
@@ -304,17 +146,18 @@ func RequireSidebarVisible(lines []TextLine, sidebarRightPx int, tabName string)
 	return fmt.Errorf("Find My sidebar is not visible. Open the sidebar, select %s, then re-run findmy", tabName)
 }
 
-// ParsePeople groups OCR lines from the People sidebar into Person records.
+// ParsePeople groups normalized text lines from the People sidebar into records.
+// It remains for parser compatibility; live extraction uses ParseAXRows.
 // The sidebar layout (in image pixels) has three bands:
 //
-//	avatar:     x ≈   0–200   (round photo with initials — OCR noise lives here)
+//	avatar:     x ≈   0–200   (round photo with initials — text noise lives here)
 //	text:       x ≈ 240–550   (name and location/staleness)
 //	distance:   x ≈ 580–700   ("1,971 mi" right-aligned to row top)
 //
 // We discard the avatar band entirely (it produces low-confidence fragments
 // like "Is" or "rk" from initials and shadows that otherwise get misread as
 // person names), then walk the remaining lines top-to-bottom. The sidebar's
-// right edge and the y-cutoff for the first row are derived from the OCR'd
+// right edge and the y-cutoff for the first row are derived from the observed
 // People/Devices/Items tab-pill positions (see detectSidebarRight,
 // detectSidebarRowStartY) rather than fixed at scaled-point constants — the
 // dynamic bounds handle compact Catalyst layouts where map labels would
@@ -377,7 +220,7 @@ func ParsePeople(lines []TextLine, sidebarRightPx, textColMinPx int) []Person {
 // the People/Devices/Items segmented control + 40px padding) and the
 // scaled-point fallback, so that on compact Catalyst layouts the cutoff
 // shrinks to exclude map labels that start near x≈350px. Returns the
-// fallback unchanged when no tab pill is OCR'd.
+// fallback unchanged when no tab pill is present.
 func detectSidebarRight(lines []TextLine, fallbackRightPx int) int {
 	maxTabRight := 0
 	for _, l := range lines {
@@ -443,7 +286,7 @@ func sidebarTabText(txt string) (isPeople, isTab bool) {
 	}
 }
 
-// mergeWrappedContinuations folds OCR lines that Vision split across two
+// mergeWrappedContinuations folds text fragments split across two
 // visual rows because of a long "City, ST • 2 min. ago" string. The
 // telltale: the previous row contains the " • " separator and the next row
 // is within ~35px below it and looks like a relative-time suffix.
@@ -517,9 +360,10 @@ func isThisDeviceLabel(s string) bool {
 	return false
 }
 
-// ParseDevices groups OCR lines from the Devices sidebar into Device records.
+// ParseDevices groups normalized text lines from the Devices sidebar into records.
+// It remains for parser compatibility; live extraction uses ParseAXRows.
 // Layout mirrors People (avatar/icon column on left, text band middle, distance
-// right) but rows can also carry a battery indicator OCR'd as "82%" or similar.
+// right) but rows can also carry a battery indicator such as "82%".
 // Battery percentages are extracted into the Battery field; everything else
 // follows the same row-walk logic as ParsePeople.
 func ParseDevices(lines []TextLine, sidebarRightPx, textColMinPx int) []Device {
@@ -582,9 +426,10 @@ func ParseDevices(lines []TextLine, sidebarRightPx, textColMinPx int) []Device {
 	return devices
 }
 
-// ParseItems groups OCR lines from the Items sidebar into Item records.
+// ParseItems groups normalized text lines from the Items sidebar into records.
+// It remains for parser compatibility; live extraction uses ParseAXRows.
 // The layout mirrors Devices (icon column on left, text band middle, distance
-// right) and can also carry a battery indicator OCR'd as "82%" or similar.
+// right) and can also carry a battery indicator such as "82%".
 func ParseItems(lines []TextLine, sidebarRightPx, textColMinPx int) []Item {
 	rows := make([]TextLine, 0, len(lines))
 	effectiveSidebarRightPx := detectSidebarRight(lines, sidebarRightPx)
@@ -645,9 +490,8 @@ func ParseItems(lines []TextLine, sidebarRightPx, textColMinPx int) []Item {
 	return items
 }
 
-// isBattery recognizes FindMy.app's battery-indicator OCR fragments. The
-// Devices tab renders a battery glyph followed by a percentage like "82%";
-// Vision usually picks up just "82%" or "82 %". A bare "Offline" or "No
+// isBattery recognizes FindMy.app battery-indicator text. The Devices tab
+// renders a battery glyph followed by a percentage like "82%". A bare "Offline" or "No
 // location" is left to fall through and become the device's Status row.
 func isBattery(s string) bool {
 	t := strings.TrimSpace(strings.ReplaceAll(s, " ", ""))
@@ -668,7 +512,7 @@ func isBattery(s string) bool {
 
 var cityRegionPostalRE = regexp.MustCompile(`^([A-Za-z .'-]+),\s*([A-Z]{2})\s*(\d{5}(?:-\d{4})?)?$`)
 
-// ExtractDetailPaneAddress filters OCR lines to FindMy's right-side detail
+// ExtractDetailPaneAddress filters accessible text to FindMy's right-side detail
 // pane and extracts the address rendered below the selected person/device
 // header. US addresses are split into city/region/postal when possible;
 // otherwise the visible address lines are returned as a single precise address.

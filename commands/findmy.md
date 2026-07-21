@@ -1,5 +1,5 @@
 ---
-description: Look up Find My friend locations on macOS (name, location, staleness, distance) via Vision OCR of FindMy.app
+description: Look up Find My friend locations on macOS through FindMy.app Accessibility text
 argument-hint: "[<name>]"
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/scripts/findmy.sh:*)
 ---
@@ -40,8 +40,4 @@ Otherwise:
 ## Caveats to surface only when relevant
 
 - This raises FindMy.app to the front briefly during the lookup.
-- On a headless Mac, the display must be awake (the CLI nudges it via
-  `caffeinate -u`, but a real or dummy USB-C display must be attached).
-- Two `/findmy` invocations within ~5s can fail with "could not create
-  image from window" — wait a few seconds and retry.
 - The CLI reads UI text, not coordinates. No lat/lon is available.

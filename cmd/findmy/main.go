@@ -3,10 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -34,6 +32,8 @@ func main() {
 		runItems(os.Args[2:])
 	case "item":
 		runItem(os.Args[2:])
+	case "play-sound":
+		runPlaySound(os.Args[2:])
 	case "watch":
 		runWatch(os.Args[2:])
 	case "log":
@@ -47,23 +47,24 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `findmy — query Find My via UI scraping
+	fmt.Fprintln(os.Stderr, `findmy — query Find My through macOS Accessibility
 
 Usage:
-  findmy people  [--json] [--keep]
-  findmy person  <name> [--json] [--keep] [--zoom]
-  findmy devices [--json] [--keep]
-  findmy device  <name> [--json] [--keep] [--zoom]
-  findmy items   [--json] [--keep]
-  findmy item    <name> [--json] [--keep]
+  findmy people  [--json] [--no-log]
+  findmy person  <name> [--json] [--zoom]
+  findmy devices [--json] [--no-log]
+  findmy device  <name> [--json] [--zoom]
+  findmy items   [--json] [--no-log]
+  findmy item    <name> [--json]
+  findmy play-sound <device> [--confirm] [--json]
   findmy watch   <people|devices|items> [--interval=5m] [--diff] [--json] [--once]
   findmy log     <name> [--kind=people|devices|items] [--since=DURATION] [--until=DURATION] [--limit=N] [--json]
 
 Flags:
   --json           emit JSON instead of a human table
-  --keep           leave debug screenshots in /tmp/findmy-cli/
   --no-log         skip writing observations to the history ledger
-  --zoom           click matched row and OCR the detail pane
+  --zoom           select the matched row and read its accessible detail pane
+  --confirm        play-sound: required to activate the Play Sound control
   --interval=DUR   watch polling interval (default 5m)
   --diff           watch: emit only changed rows (default on for --json, off for human)
   --once           watch: poll once and exit`)
@@ -72,7 +73,6 @@ Flags:
 
 type runOpts struct {
 	json  bool
-	keep  bool
 	zoom  bool
 	noLog bool
 }
@@ -89,7 +89,6 @@ func parseOpts(args []string) (runOpts, []string) {
 		case "--json", "-json":
 			o.json = true
 		case "--keep", "-keep":
-			o.keep = true
 		case "--no-log", "-no-log":
 			o.noLog = true
 		case "--zoom", "-zoom":
@@ -98,7 +97,6 @@ func parseOpts(args []string) (runOpts, []string) {
 			positional = append(positional, a)
 		}
 	}
-	_ = flag.CommandLine
 	return o, positional
 }
 
@@ -187,27 +185,10 @@ func parseWatchInterval(text string) (time.Duration, error) {
 	return interval, nil
 }
 
-func tmpDir() string {
-	d := "/tmp/findmy-cli"
-	_ = os.MkdirAll(d, 0o755)
-	return d
-}
-
 func runPeople(args []string) {
 	opts, _ := parseOpts(args)
-
-	w, err := findmy.PreparePeople()
+	people, err := findmy.ReadPeopleAX()
 	must(err)
-	shot := filepath.Join(tmpDir(), "people.png")
-	must(findmy.Capture(w, shot))
-	defer cleanup(shot, opts.keep)
-
-	lines, err := findmy.OCR(shot)
-	must(err)
-
-	sidebarRightPx, textColMinPx := pixelLayout(w, shot)
-	must(findmy.RequireSidebarVisible(lines, sidebarRightPx, "People"))
-	people := findmy.ParsePeople(lines, sidebarRightPx, textColMinPx)
 	appendObservations("people", peopleObservations(people), opts.noLog)
 
 	if opts.json {
@@ -233,19 +214,8 @@ func runPeople(args []string) {
 
 func runDevices(args []string) {
 	opts, _ := parseOpts(args)
-
-	w, err := findmy.PrepareDevices()
+	devices, err := findmy.ReadDevicesAX()
 	must(err)
-	shot := filepath.Join(tmpDir(), "devices.png")
-	must(findmy.Capture(w, shot))
-	defer cleanup(shot, opts.keep)
-
-	lines, err := findmy.OCR(shot)
-	must(err)
-
-	sidebarRightPx, textColMinPx := pixelLayout(w, shot)
-	must(findmy.RequireSidebarVisible(lines, sidebarRightPx, "Devices"))
-	devices := findmy.ParseDevices(lines, sidebarRightPx, textColMinPx)
 	appendObservations("devices", deviceObservations(devices), opts.noLog)
 
 	if opts.json {
@@ -272,21 +242,107 @@ func runDevices(args []string) {
 	}
 }
 
+type playSoundOpts struct {
+	json    bool
+	confirm bool
+	device  string
+}
+
+func parsePlaySoundOpts(args []string) (playSoundOpts, error) {
+	var opts playSoundOpts
+	var positional []string
+	for _, arg := range args {
+		switch arg {
+		case "--json", "-json":
+			opts.json = true
+		case "--confirm", "-confirm":
+			opts.confirm = true
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return opts, fmt.Errorf("unknown flag %s", arg)
+			}
+			positional = append(positional, arg)
+		}
+	}
+	if len(positional) == 0 {
+		return opts, fmt.Errorf("device name is required")
+	}
+	opts.device = strings.Join(positional, " ")
+	return opts, nil
+}
+
+func executePlaySound(
+	opts playSoundOpts,
+	list func() ([]findmy.Device, error),
+	action func(findmy.Device) error,
+) (findmy.PlaySoundResult, error) {
+	devices, err := list()
+	if err != nil {
+		return findmy.PlaySoundResult{}, err
+	}
+	device, err := findmy.ResolveDevice(devices, opts.device)
+	if err != nil {
+		return findmy.PlaySoundResult{}, err
+	}
+	result := findmy.PlaySoundResult{
+		OK: !opts.confirm, Action: "play-sound", Device: device.Name,
+		Confirmed: opts.confirm, DryRun: !opts.confirm,
+	}
+	if !opts.confirm {
+		return result, nil
+	}
+	if err := action(*device); err != nil {
+		return result, err
+	}
+	result.OK = true
+	return result, nil
+}
+
+func runPlaySound(args []string) {
+	opts, err := parsePlaySoundOpts(args)
+	if err != nil {
+		if opts.json {
+			emitJSON(findmy.PlaySoundResult{
+				OK: false, Action: "play-sound", Device: opts.device,
+				Confirmed: opts.confirm, DryRun: !opts.confirm, Error: err.Error(),
+			})
+			os.Exit(2)
+		}
+		fmt.Fprintln(os.Stderr, "error:", err)
+		fmt.Fprintln(os.Stderr, "usage: findmy play-sound <device> [--confirm] [--json]")
+		os.Exit(2)
+	}
+	result, err := executePlaySound(opts, findmy.ReadDevicesAX, findmy.PlaySound)
+	if err != nil {
+		if opts.json {
+			if result.Action == "" {
+				result = findmy.PlaySoundResult{
+					Action: "play-sound", Device: opts.device,
+					Confirmed: opts.confirm, DryRun: !opts.confirm,
+				}
+			}
+			result.OK = false
+			result.Error = err.Error()
+			emitJSON(result)
+			os.Exit(1)
+		}
+		must(err)
+	}
+	if opts.json {
+		emitJSON(result)
+		return
+	}
+	if result.DryRun {
+		fmt.Printf("Would play a sound on %q. Re-run with --confirm to activate it.\n", result.Device)
+		return
+	}
+	fmt.Printf("Play Sound activated for %q.\n", result.Device)
+}
+
 func runItems(args []string) {
 	opts, _ := parseOpts(args)
-
-	w, err := findmy.PrepareItems()
+	items, err := findmy.ReadItemsAX()
 	must(err)
-	shot := filepath.Join(tmpDir(), "items.png")
-	must(findmy.Capture(w, shot))
-	defer cleanup(shot, opts.keep)
-
-	lines, err := findmy.OCR(shot)
-	must(err)
-
-	sidebarRightPx, textColMinPx := pixelLayout(w, shot)
-	must(findmy.RequireSidebarVisible(lines, sidebarRightPx, "Items"))
-	items := findmy.ParseItems(lines, sidebarRightPx, textColMinPx)
 	appendObservations("items", itemObservations(items), opts.noLog)
 
 	if opts.json {
@@ -316,56 +372,18 @@ func runItems(args []string) {
 func runDevice(args []string) {
 	opts, rest := parseOpts(args)
 	if len(rest) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: findmy device <name> [--json] [--keep] [--zoom]")
+		fmt.Fprintln(os.Stderr, "usage: findmy device <name> [--json] [--zoom]")
 		os.Exit(2)
 	}
-	target := strings.ToLower(strings.Join(rest, " "))
-
-	w, err := findmy.PrepareDevices()
+	target := strings.Join(rest, " ")
+	devices, err := findmy.ReadDevicesAX()
 	must(err)
-	shot := filepath.Join(tmpDir(), "devices.png")
-	must(findmy.Capture(w, shot))
-	defer cleanup(shot, opts.keep)
-
-	lines, err := findmy.OCR(shot)
+	match, err := findmy.LookupDevice(devices, target)
 	must(err)
-
-	sidebarRightPx, textColMinPx := pixelLayout(w, shot)
-	must(findmy.RequireSidebarVisible(lines, sidebarRightPx, "Devices"))
-	devices := findmy.ParseDevices(lines, sidebarRightPx, textColMinPx)
-
-	var match *findmy.Device
-	for i := range devices {
-		if strings.EqualFold(strings.TrimSpace(devices[i].Name), target) {
-			match = &devices[i]
-			break
-		}
-	}
-	if match == nil {
-		for i := range devices {
-			if strings.Contains(strings.ToLower(devices[i].Name), target) {
-				match = &devices[i]
-				break
-			}
-		}
-	}
-	if match == nil {
-		fmt.Fprintf(os.Stderr, "no device matching %q in sidebar\n", target)
-		os.Exit(1)
-	}
 	if opts.zoom {
-		nameLine, ok := findSidebarNameLine(lines, sidebarRightPx, textColMinPx, match.Name)
-		if !ok {
-			fmt.Fprintf(os.Stderr, "could not locate sidebar row for %q\n", match.Name)
-			os.Exit(1)
-		}
-		detailShot := filepath.Join(tmpDir(), "device-detail.png")
-		must(enrichWithDetailPane(w, shot, detailShot, nameLine, sidebarRightPx, opts.keep, func(precise, city, region, postal string) {
-			match.PreciseAddress = precise
-			match.City = city
-			match.Region = region
-			match.PostalCode = postal
-		}))
+		precise, city, region, postal, err := findmy.ReadDeviceDetail(*match)
+		must(err)
+		match.PreciseAddress, match.City, match.Region, match.PostalCode = precise, city, region, postal
 	}
 
 	if opts.json {
@@ -394,23 +412,12 @@ func runDevice(args []string) {
 func runItem(args []string) {
 	opts, rest := parseOpts(args)
 	if len(rest) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: findmy item <name> [--json] [--keep]")
+		fmt.Fprintln(os.Stderr, "usage: findmy item <name> [--json]")
 		os.Exit(2)
 	}
 	target := strings.ToLower(strings.Join(rest, " "))
-
-	w, err := findmy.PrepareItems()
+	items, err := findmy.ReadItemsAX()
 	must(err)
-	shot := filepath.Join(tmpDir(), "items.png")
-	must(findmy.Capture(w, shot))
-	defer cleanup(shot, opts.keep)
-
-	lines, err := findmy.OCR(shot)
-	must(err)
-
-	sidebarRightPx, textColMinPx := pixelLayout(w, shot)
-	must(findmy.RequireSidebarVisible(lines, sidebarRightPx, "Items"))
-	items := findmy.ParseItems(lines, sidebarRightPx, textColMinPx)
 
 	var match *findmy.Item
 	for i := range items {
@@ -684,23 +691,12 @@ func printLog(obs []ledger.Observation) {
 func runPerson(args []string) {
 	opts, rest := parseOpts(args)
 	if len(rest) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: findmy person <name> [--json] [--keep] [--zoom]")
+		fmt.Fprintln(os.Stderr, "usage: findmy person <name> [--json] [--zoom]")
 		os.Exit(2)
 	}
 	target := strings.ToLower(strings.Join(rest, " "))
-
-	w, err := findmy.PreparePeople()
+	people, err := findmy.ReadPeopleAX()
 	must(err)
-	shot := filepath.Join(tmpDir(), "people.png")
-	must(findmy.Capture(w, shot))
-	defer cleanup(shot, opts.keep)
-
-	lines, err := findmy.OCR(shot)
-	must(err)
-
-	sidebarRightPx, textColMinPx := pixelLayout(w, shot)
-	must(findmy.RequireSidebarVisible(lines, sidebarRightPx, "People"))
-	people := findmy.ParsePeople(lines, sidebarRightPx, textColMinPx)
 
 	var match *findmy.Person
 	for i := range people {
@@ -722,18 +718,9 @@ func runPerson(args []string) {
 		os.Exit(1)
 	}
 	if opts.zoom {
-		nameLine, ok := findSidebarNameLine(lines, sidebarRightPx, textColMinPx, match.Name)
-		if !ok {
-			fmt.Fprintf(os.Stderr, "could not locate sidebar row for %q\n", match.Name)
-			os.Exit(1)
-		}
-		detailShot := filepath.Join(tmpDir(), "person-detail.png")
-		must(enrichWithDetailPane(w, shot, detailShot, nameLine, sidebarRightPx, opts.keep, func(precise, city, region, postal string) {
-			match.PreciseAddress = precise
-			match.City = city
-			match.Region = region
-			match.PostalCode = postal
-		}))
+		precise, city, region, postal, err := findmy.ReadPersonDetail(*match)
+		must(err)
+		match.PreciseAddress, match.City, match.Region, match.PostalCode = precise, city, region, postal
 	}
 
 	if opts.json {
@@ -756,123 +743,10 @@ func runPerson(args []string) {
 	fmt.Println()
 }
 
-func findSidebarNameLine(lines []findmy.TextLine, sidebarRightPx, textColMinPx int, name string) (findmy.TextLine, bool) {
-	target := strings.ToLower(strings.TrimSpace(name))
-	var contains *findmy.TextLine
-	for i := range lines {
-		l := lines[i]
-		txt := strings.TrimSpace(l.Text)
-		if txt == "" {
-			continue
-		}
-		if l.X+l.Width/2 >= sidebarRightPx {
-			continue
-		}
-		if l.X < textColMinPx {
-			continue
-		}
-		candidate := strings.ToLower(txt)
-		if candidate == target {
-			return l, true
-		}
-		if contains == nil && strings.Contains(candidate, target) {
-			contains = &l
-		}
-	}
-	if contains != nil {
-		return *contains, true
-	}
-	return findmy.TextLine{}, false
-}
-
-func enrichWithDetailPane(w *findmy.Window, sidebarShotPath, detailShotPath string, clickLine findmy.TextLine, sidebarRightPx int, keep bool, apply func(precise, city, region, postal string)) error {
-	clickX := clickLine.X + clickLine.Width/2
-	clickY := clickLine.Y + clickLine.Height/2
-	screenX, screenY := windowPointFromImagePoint(w, sidebarShotPath, clickX, clickY)
-	if err := findmy.Click(screenX, screenY); err != nil {
-		return fmt.Errorf("click matched row: %w", err)
-	}
-
-	time.Sleep(zoomDelay())
-
-	if err := findmy.Capture(w, detailShotPath); err != nil {
-		return err
-	}
-	defer cleanup(detailShotPath, keep)
-
-	lines, err := findmy.OCR(detailShotPath)
-	if err != nil {
-		return err
-	}
-	precise, city, region, postal := findmy.ExtractDetailPaneAddress(lines, sidebarRightPx)
-	if precise != "" || city != "" || region != "" || postal != "" {
-		apply(precise, city, region, postal)
-	}
-	return nil
-}
-
-func zoomDelay() time.Duration {
-	const fallback = 600 * time.Millisecond
-	if raw := os.Getenv("FINDMY_ZOOM_DELAY_MS"); raw != "" {
-		ms, err := strconv.Atoi(raw)
-		if err == nil && ms > 0 {
-			return time.Duration(ms) * time.Millisecond
-		}
-	}
-	return fallback
-}
-
-// pixelLayout returns the sidebar-right and name-column-left thresholds in
-// image pixels. The FindMy sidebar is ~340pt wide; the avatar column is
-// ~100pt with the avatar circle centered around 50pt, so an 80pt cutoff
-// drops centered avatar OCR fragments while admitting real name/location
-// text that begins around 90pt. We use a float scale because some displays
-// (e.g. a 4K dummy plug) report non-integer pixel-per-point ratios.
-func pixelLayout(w *findmy.Window, imagePath string) (sidebarRightPx, textColMinPx int) {
-	scale := imageScale(w, imagePath)
-	return int(340 * scale), int(80 * scale)
-}
-
-func windowPointFromImagePoint(w *findmy.Window, imagePath string, px, py int) (int, int) {
-	scale := imageScale(w, imagePath)
-	return w.X + int(float64(px)/scale), w.Y + int(float64(py)/scale)
-}
-
-func imageScale(w *findmy.Window, imagePath string) float64 {
-	scale := 2.0
-	if info, err := imageSize(imagePath); err == nil && w.Width > 0 {
-		if s := float64(info.W) / float64(w.Width); s >= 1 {
-			scale = s
-		}
-	}
-	return scale
-}
-
-type imgInfo struct{ W, H int }
-
-func imageSize(path string) (imgInfo, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return imgInfo{}, err
-	}
-	defer f.Close()
-	cfg, _, err := decodeConfig(f)
-	if err != nil {
-		return imgInfo{}, err
-	}
-	return imgInfo{W: cfg.Width, H: cfg.Height}, nil
-}
-
 func emitJSON(v any) {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(v)
-}
-
-func cleanup(path string, keep bool) {
-	if !keep {
-		_ = os.Remove(path)
-	}
 }
 
 func must(err error) {

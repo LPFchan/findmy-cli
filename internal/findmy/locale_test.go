@@ -47,3 +47,40 @@ func TestLookupStringsHasItemsTab(t *testing.T) {
 		})
 	}
 }
+
+func TestParseAppleLanguages(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		wanted string
+	}{
+		{
+			name:   "bare Korean first entry",
+			input:  "(\n    ko,\n    \"zh-Hans\",\n    \"zh-Hant\"\n)\n",
+			wanted: "ko",
+		},
+		{
+			name:   "quoted region tag",
+			input:  "(\n    \"fr-FR\",\n    en\n)\n",
+			wanted: "fr-FR",
+		},
+		{
+			name:   "whitespace and leading comma",
+			input:  " (  , \n\t en-GB  , fr ) ",
+			wanted: "en-GB",
+		},
+		{name: "empty", input: "", wanted: "en"},
+		{name: "empty array", input: "(  )", wanted: "en"},
+		{name: "missing closing paren", input: "(ko, en", wanted: "en"},
+		{name: "unterminated quote", input: "(\"fr-FR)", wanted: "en"},
+		{name: "invalid token", input: "(ko@KR, en)", wanted: "en"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := parseAppleLanguages(test.input); got != test.wanted {
+				t.Fatalf("parseAppleLanguages() = %q, want %q", got, test.wanted)
+			}
+		})
+	}
+}

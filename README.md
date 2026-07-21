@@ -1,70 +1,49 @@
 # findmy-cli
 
-Read your Find My people, device, and item locations from the macOS FindMy.app via UI
-scraping. Apple does not expose a public API for Find My locations and the
-on-disk caches are encrypted with keychain-bound keys, so this tool drives the
-GUI: it activates FindMy.app, switches to the People, Devices, or Items tab,
-screenshots the window, and runs Vision OCR on the result.
+Read your Find My people, device, and item locations from the macOS FindMy.app
+through its Accessibility tree. Apple does not expose a public API for Find My
+locations and the on-disk caches are encrypted with keychain-bound keys, so the
+CLI activates FindMy.app, switches tabs, and reads the accessible sidebar and
+detail text. It does not capture the screen or run OCR.
 
-**Privacy & consent.** This is read-only and consent-bounded. It can only see the
+**Privacy & consent.** Location lookup is read-only and consent-bounded. It can only see the
 people who have already opted in to share their location with this Mac's Apple ID
 in Apple's Find My, plus your own devices and items. It returns coarse location
 only (city/state, staleness, distance), bypasses no Apple access control, and
-initiates no network traffic — everything stays on-device. Use it to locate
+initiates no external network traffic — everything stays on-device. Use it to locate
 consenting friends and family, not to monitor or track anyone without their
-knowledge and consent.
+knowledge and consent. The separate `play-sound` command can activate only the
+Play Sound control for one of your Devices and requires `--confirm`.
 
 ## Why a Go CLI plus a Swift helper
 
-The macOS APIs we need (Vision, CoreGraphics window list, CGEvent click) have no
-Go binding. We bundle a tiny Swift binary `findmy-helper` that exposes them as
-JSON-emitting subcommands, and a Go CLI `findmy` that orchestrates.
+The macOS Accessibility APIs have no standard Go binding. We bundle a small
+Swift binary, `findmy-helper`, that emits a normalized AX tree and exposes a
+narrow allow-listed action. The Go CLI groups records, resolves names, enforces
+confirmation, and formats output.
 
 ## Install
 
-Pick the channel that matches how you'll use it:
-
-| Goal | Channel | Command |
-|---|---|---|
-| Use `findmy` CLI from terminal | Homebrew | `brew install omarshahine/tap/findmy-cli` |
-| Use as OpenClaw plugin (chat tools) | ClawHub | `clawhub install findmy-cli` |
-| Use as Claude Code plugin | OpenClaw | `openclaw plugins install --link ~/GitHub/findmy-cli` |
-| Use as a Node library | NPM | `npm install findmy-cli` |
-| Hack on the code | Source | `git clone … && make` |
-
-### Homebrew (CLI)
+This fork is not published to Homebrew, NPM, or ClawHub. Build and install it
+from `LPFchan/findmy-cli` so the installed binaries include AX parsing and the
+gated Play Sound command:
 
 ```bash
-brew install omarshahine/tap/findmy-cli
-```
-
-Installs `findmy` and `findmy-helper` to `/opt/homebrew/bin/`. macOS only.
-Tap source: [omarshahine/homebrew-tap](https://github.com/omarshahine/homebrew-tap).
-First run will prompt for **Screen Recording** permission.
-
-### ClawHub (OpenClaw plugin)
-
-```bash
-clawhub install findmy-cli
-```
-
-Registers `findmy_people` and `findmy_person` as OpenClaw tools. Shells out
-to the `findmy` binary — install that via Homebrew first.
-Listing: [`clawhub.com/p/findmy-cli`](https://clawhub.com/p/findmy-cli) ·
-NPM package: [`findmy-cli`](https://www.npmjs.com/package/findmy-cli).
-
-### Source build
-
-```bash
+git clone https://github.com/LPFchan/findmy-cli.git
+cd findmy-cli
 make
+mkdir -p "$HOME/.local/bin"
+install -m 0755 bin/findmy bin/findmy-helper "$HOME/.local/bin/"
 ```
 
-Outputs `bin/findmy` and `bin/findmy-helper`.
+Ensure `$HOME/.local/bin` is on `PATH`. For development, run `make` after source
+changes and execute `bin/findmy` directly. A linked Claude Code/OpenClaw plugin
+can use this checkout's `scripts/findmy.sh`, which builds the same sources.
 
 Requirements:
 - macOS (tested on 15+; FindMy.app is a Catalyst app)
 - Go 1.22+
-- Xcode Command Line Tools (`swiftc`)
+- Xcode Command Line Tools (`swiftc` and macOS frameworks)
 
 ## Usage
 
@@ -74,9 +53,9 @@ findmy people
 findmy people --json
 findmy people --no-log
 
-# Click a row and OCR the detail pane (precise address).
+# Select a row and read the accessible detail pane (precise address).
 findmy person "Omar Shahine"
-findmy person "Omar Shahine" --json
+findmy person "Omar Shahine" --zoom --json
 
 # List devices in the sidebar.
 findmy devices
@@ -85,6 +64,13 @@ findmy devices --json
 # Read one matching device.
 findmy device "Omar's iPhone"
 findmy device "Omar's iPhone" --json
+
+# Preview Play Sound. This does not activate anything.
+findmy play-sound "Omar's iPhone"
+findmy play-sound "Omar's iPhone" --json
+
+# Explicitly activate Play Sound after reviewing the unique match.
+findmy play-sound "Omar's iPhone" --confirm
 
 # List items in the sidebar.
 findmy items
@@ -98,6 +84,12 @@ findmy item "AirPods Pro" --json
 findmy log "Omar Shahine" --since=24h
 findmy log "Omar's iPhone" --kind=devices --limit=10 --json
 ```
+
+Confirmation does not reuse the dry-run tree. The helper selects the Devices
+tab, resolves one exact device row from a fresh AX tree, selects it, rebuilds
+the tree, verifies that the selected row or detail pane still names that exact
+device, and only then presses exactly one Play Sound control. Any mismatch or
+ambiguity fails closed.
 
 Successful `findmy people`, `findmy devices`, and `findmy items` runs append parsed sidebar
 records to a local SQLite ledger before printing output. Pass `--no-log` to
@@ -113,88 +105,40 @@ testing.
 
 ## Required macOS permissions
 
-Grant to the terminal emulator (or to `findmy` once installed system-wide):
+Grant **Accessibility** to the built or installed `findmy-helper` executable:
+Settings → Privacy & Security → Accessibility. Screen Recording is not
+required. Verify the exact helper binary after building:
 
-- **Screen Recording** — for `screencapture`
-- **Accessibility** — for `osascript` menu clicks
+```bash
+bin/findmy-helper permissions
+# {"accessibility":true}
+```
 
-Settings → Privacy & Security → Screen Recording / Accessibility.
-
-After granting, **fully quit and relaunch the host process** — TCC is read once
-at process start.
-
-## Running on a headless Mac
-
-FindMy.app needs WindowServer compositing to render its window. WindowServer
-only runs when macOS sees a display, so a Mac mini / Studio / Pro with nothing
-plugged into HDMI or USB-C will return a 99 KB all-black PNG every time you
-call `screencapture`, even though the process itself runs fine.
-
-To make findmy work headless:
-
-1. **Plug in a dummy display.** A 4K HDMI/USB-C "headless adapter" (~$10 on
-   Amazon, search "4K HDMI dummy plug" or "USB-C dummy display"). macOS sees
-   it as a real 4K@60Hz monitor and starts WindowServer normally.
-
-2. **Disable display sleep** so WindowServer stays compositing:
-
-   ```bash
-   sudo pmset -a displaysleep 0
-   sudo pmset -a sleep 0          # optional: also disable system sleep
-   ```
-
-   Or, for a per-session keep-awake without changing global power settings:
-
-   ```bash
-   caffeinate -d &
-   ```
-
-   Run `caffeinate` as a LaunchAgent if you want it to start at login.
-
-3. **Verify WindowServer can see FindMy.app:**
-
-   ```bash
-   open -a FindMy
-   findmy-helper window --owner FindMy
-   ```
-
-   Should return JSON with non-zero `width`/`height` and `onScreen: true`. If
-   `width`/`height` are 0 or the array is empty, WindowServer isn't
-   compositing — re-check display sleep and that the dummy plug is seated.
-
-4. **Grant Screen Recording to the host process** that will call `findmy`
-   (your SSH session's shell, the LaunchAgent, the OpenClaw gateway, etc.).
-   TCC is per-binary path; the brew-installed `/opt/homebrew/bin/findmy-helper`
-   is what needs the grant.
-
-If you're hitting black screenshots even with a dummy plug, the CLI's
-`findmy-helper permissions` output (`screenRecording: false`) is the
-diagnostic — TCC denied is more common than missing display.
+After granting, relaunch the calling application. Rebuilding an unsigned
+development helper can require reauthorizing that binary.
 
 ## Limitations
 
-- **The display must be awake and unlocked.** WindowServer stops compositing
-  when the display sleeps, so `screencapture` returns a 99 KB all-black PNG.
-  The CLI detects this and tells you to wake the keyboard. There is no
-  software-only path to wake a sleeping display from userland — Apple gates
-  `IODisplayWranglerWakeup` behind real HID hardware. See [Running on a
-  headless Mac](#running-on-a-headless-mac) above for the dummy-plug fix.
-- The MapKit map area does not always render into the captured bitmap (Catalyst
-  quirk). This tool only reads the sidebar and detail pane text; map pins are
-  not extracted.
+- The user session must be logged in and FindMy.app must expose its UI through
+  Accessibility. A locked or logged-out session is not supported.
+- The CLI reads sidebar and detail-pane text; map pins and coordinates are not
+  extracted.
 - The FindMy.app window must be openable on this Mac (you must be signed in to
   iCloud and have at least one friend sharing).
-- Window position is re-queried on every run; the app does not need to be at a
-  fixed location.
-- This brings FindMy.app to the foreground and steals focus during a click.
+- This brings FindMy.app to the foreground and can steal focus while switching
+  tabs or selecting a detail row.
+- `play-sound` supports Devices only. It rejects missing and ambiguous matches,
+  performs a dry run without `--confirm`, re-resolves and verifies the exact
+  target in the confirmed helper process, and cannot invoke Lost Mode, erase,
+  sharing, or other controls.
 - Apple's TOS may consider GUI scraping out of scope. Use at your own risk.
 
 ## Layout
 
 ```
 cmd/findmy/                     Go CLI
-internal/findmy/                Orchestration + sidebar parser
-helpers/findmy-helper/main.swift  window + ocr + click subcommands
+internal/findmy/                Orchestration + AX grouping/parser
+helpers/findmy-helper/main.swift  AX tree + allow-listed action subcommands
 bin/                            Build outputs
 .claude-plugin/plugin.json      Claude Code / OpenClaw plugin manifest
 commands/findmy.md              /findmy slash command
@@ -202,21 +146,9 @@ skills/findmy/SKILL.md          Auto-triggering skill
 scripts/findmy.sh               Plugin wrapper (auto-builds on first use)
 ```
 
-## Plugin surfaces
-
-All four distribution channels in one repo:
-
-| Surface | Source of truth | Auto-published |
-|---|---|---|
-| Homebrew formula | [`omarshahine/homebrew-tap`](https://github.com/omarshahine/homebrew-tap) `Formula/findmy-cli.rb` | manual on tag |
-| NPM package | `openclaw/package.json` | GH Actions on tag push |
-| ClawHub package | same as NPM, source-linked to commit | GH Actions on tag push |
-| Claude Code plugin | `.claude-plugin/plugin.json` (bundle format) | manual linked install |
-
-CI workflows under `.github/workflows/` handle NPM and ClawHub on every
-`v*` tag push (OIDC trusted publishing for NPM, `CLAWHUB_TOKEN` for
-ClawHub). Homebrew formula bump is still manual.
+## Plugin development
 
 The Claude Code wrapper (`scripts/findmy.sh`) builds `bin/findmy` and
-`bin/findmy-helper` on first invocation via `make`. No binaries are
-committed.
+`bin/findmy-helper` from this checkout on first invocation. For OpenClaw
+development, build this fork and set `FINDMY_CLI_PATH` to its `bin/findmy`.
+No binaries are committed.

@@ -22,7 +22,7 @@ type AppStrings struct {
 	ItemsTab          string   // Items tab
 	SearchLabel       string   // Search field label in sidebar
 	TimeSuffixes      []string // patterns for wrapped-line merging (see looksLikeTimeSuffix)
-	DetailPaneButtons []string // Button labels to ignore while OCR'ing the detail pane
+	DetailPaneButtons []string // Button labels to ignore in the detail pane
 }
 
 var (
@@ -78,17 +78,70 @@ func detectSystemLanguage() string {
 	if err != nil {
 		return "en"
 	}
-	// Output looks like: (\n    "fr-FR"\n)
-	s := string(out)
-	start := strings.Index(s, `"`)
-	if start < 0 {
+	return parseAppleLanguages(string(out))
+}
+
+// parseAppleLanguages returns the first language tag from the property-list
+// array format emitted by `defaults read -g AppleLanguages`. Depending on the
+// tag and defaults version, array entries may be quoted or bare.
+func parseAppleLanguages(output string) string {
+	start := strings.IndexByte(output, '(')
+	end := strings.LastIndexByte(output, ')')
+	if start < 0 || end <= start {
 		return "en"
 	}
-	end := strings.Index(s[start+1:], `"`)
-	if end < 0 {
+	content := output[start+1 : end]
+	index := 0
+	for index < len(content) {
+		switch content[index] {
+		case ' ', '\t', '\r', '\n', ',':
+			index++
+		default:
+			goto token
+		}
+	}
+	return "en"
+
+token:
+	if content[index] == '"' {
+		index++
+		begin := index
+		for index < len(content) && content[index] != '"' {
+			if content[index] == '\\' {
+				return "en"
+			}
+			index++
+		}
+		if index >= len(content) || index == begin {
+			return "en"
+		}
+		return validLanguageTagOrEnglish(content[begin:index])
+	}
+
+	begin := index
+	for index < len(content) {
+		switch content[index] {
+		case ' ', '\t', '\r', '\n', ',', ')':
+			return validLanguageTagOrEnglish(content[begin:index])
+		default:
+			index++
+		}
+	}
+	return validLanguageTagOrEnglish(content[begin:index])
+}
+
+func validLanguageTagOrEnglish(tag string) string {
+	if tag == "" {
 		return "en"
 	}
-	return s[start+1 : start+1+end]
+	for _, r := range tag {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '-' || r == '_' {
+			continue
+		}
+		return "en"
+	}
+	return tag
 }
 
 func lookupStrings(lang string) *AppStrings {
@@ -122,7 +175,7 @@ func (s *AppStrings) clone() *AppStrings {
 	return &c
 }
 
-// SkipWords returns the set of OCR text to ignore when parsing the sidebar.
+// SkipWords returns the set of UI text to ignore when parsing the sidebar.
 func (s *AppStrings) SkipWords() map[string]bool {
 	skip := map[string]bool{
 		// Universal UI elements
@@ -133,7 +186,7 @@ func (s *AppStrings) SkipWords() map[string]bool {
 		s.ItemsTab:    true,
 		s.SearchLabel: true,
 	}
-	// Always include English (the OCR sometimes picks up both)
+	// Always include English for mixed-localization Accessibility trees.
 	for _, w := range []string{"People", "Devices", "Items", "Search"} {
 		skip[w] = true
 	}
@@ -153,6 +206,18 @@ func (s *AppStrings) DetailButtons() []string {
 	}
 	buttons = append(buttons, s.DetailPaneButtons...)
 	return buttons
+}
+
+// PlaySoundLabels returns localized fallbacks used only when Find My does not
+// expose a stable accessibility identifier for its Play Sound control. The
+// helper always prefers that identifier, so these labels are intentionally
+// limited to the target locale and English.
+func (s *AppStrings) PlaySoundLabels() []string {
+	labels := []string{"Play Sound"}
+	if s.DevicesTab == "기기" {
+		labels = append(labels, "사운드 재생")
+	}
+	return labels
 }
 
 // --- Time suffix patterns ---

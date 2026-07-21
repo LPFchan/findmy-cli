@@ -12,22 +12,15 @@ metadata:
   openclaw:
     emoji: pushpin
     os: [darwin]
-    homepage: https://github.com/omarshahine/findmy-cli
+    homepage: https://github.com/LPFchan/findmy-cli
     requires:
       bins: [findmy, findmy-helper]
-    install:
-      - kind: brew
-        id: findmy-cli
-        label: "Install findmy and findmy-helper via Homebrew"
-        formula: omarshahine/tap/findmy-cli
-        bins: [findmy, findmy-helper]
 ---
 
 # Find My Skill
 
-Two tools available, both shell out to the `findmy` binary which drives
-FindMy.app via screen capture and Vision OCR. Read-only — never mutates
-FindMy.app state.
+Two tools available, both shell out to the `findmy` binary, which reads
+FindMy.app through macOS Accessibility. These plugin tools are read-only.
 
 ## Privacy & consent (read first)
 
@@ -104,29 +97,29 @@ on the *next* tool call that turns location into an action.
 - **Stale staleness** (`"7 hr. ago"`, etc.) means the device hasn't checked
   in recently — phone may be off, in low-power mode, or out of signal.
 - **Focus steal**: each invocation briefly raises FindMy.app to the front.
-- **Back-to-back races**: two findmy calls within ~5s can fail. Space them
-  out when iterating.
+- The CLI also has a device-only `play-sound` command. It is not exposed as an
+  OpenClaw tool and is a dry run unless a human explicitly supplies
+  `--confirm`. Confirmed actions freshly resolve and verify the exact selected
+  device inside one helper process.
 
 ## Install requirement
 
-The plugin shells out to the `findmy` binary. If a tool returns
-`"findmy not found on PATH"`, the binary isn't installed. Install with:
+The plugin shells out to this fork's `findmy` binary. If a tool returns
+`"findmy not found on PATH"`, build the fork and configure its path:
 
 ```bash
-brew install omarshahine/tap/findmy-cli
+git clone https://github.com/LPFchan/findmy-cli.git
+cd findmy-cli
+make
+export FINDMY_CLI_PATH="$PWD/bin/findmy"
 ```
 
-After install, grant **Screen Recording** to the host process running this
-plugin (System Settings → Privacy & Security → Screen Recording). Without
-it, FindMy.app captures will return blank.
+After building, grant **Accessibility** to this checkout's
+`bin/findmy-helper` executable (System Settings → Privacy & Security →
+Accessibility).
 
-## ClawScan note
+## Implementation note
 
-This skill drives FindMy.app by raising it to the foreground, capturing a
-screenshot of its window, running Apple's Vision OCR on the image, and
-parsing the resulting text. The behavior may look unusual to a static
-scanner — screen capture, OCR, and UI scraping — but it is the only path
-to friend location data, since Apple does not expose this through any
-public API. The plugin does not click, type into, or otherwise mutate
-FindMy.app; it is read-only. No network traffic is initiated by this
-plugin. All data stays on-device.
+This skill raises FindMy.app, switches to the People tab, and parses accessible
+sidebar text. It does not capture screenshots or run OCR. The plugin tools do
+not expose the CLI's separate Play Sound action.

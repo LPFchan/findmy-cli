@@ -1,7 +1,7 @@
 {
   "name": "findmy-cli",
   "version": "0.3.2",
-  "description": "OpenClaw plugin for macOS Find My friend locations. Read-only and consent-bounded: it reads only the friends who have already opted in to share their location with this Mac's Apple ID, returns coarse location only, and cannot surface anyone who has not consented. For personal use locating consenting friends and family, not surveillance. Shells out to the findmy CLI to drive FindMy.app via screen capture and Vision OCR. macOS-only. Install findmy first via `brew install omarshahine/tap/findmy-cli`.",
+  "description": "OpenClaw plugin for macOS Find My friend locations. Read-only and consent-bounded: it reads only the friends who have already opted in to share with this Mac's Apple ID and returns coarse location only. Shells out to the findmy CLI, which reads FindMy.app through macOS Accessibility. macOS-only; requires Accessibility permission.",
   "type": "module",
   "openclaw": {
     "extensions": [
@@ -20,7 +20,7 @@
         "findmy-helper"
       ],
       "osPermissions": [
-        "macos:screen-recording"
+        "macos:accessibility"
       ]
     },
     "hostTargets": [
@@ -41,9 +41,8 @@
     "findmy",
     "location",
     "macos",
-    "ocr",
-    "vision",
-    "screen-scraping"
+    "accessibility",
+    "ax"
   ],
   "author": {
     "name": "Omar Shahine",
@@ -52,12 +51,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/omarshahine/findmy-cli.git",
+    "url": "https://github.com/LPFchan/findmy-cli.git",
     "directory": "openclaw"
   },
-  "homepage": "https://github.com/omarshahine/findmy-cli#readme",
+  "homepage": "https://github.com/LPFchan/findmy-cli#readme",
   "bugs": {
-    "url": "https://github.com/omarshahine/findmy-cli/issues"
+    "url": "https://github.com/LPFchan/findmy-cli/issues"
   },
   "publishConfig": {
     "access": "public"

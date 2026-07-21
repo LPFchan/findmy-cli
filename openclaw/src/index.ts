@@ -2,8 +2,8 @@
  * OpenClaw plugin entry for findmy-cli.
  *
  * Registers two tools that shell out to the `findmy` binary to query Find My
- * friend locations on macOS. The CLI drives FindMy.app via screen capture
- * and Vision OCR — see the host repo for the underlying mechanism.
+ * friend locations on macOS. The CLI reads FindMy.app through macOS
+ * Accessibility — see the host repo for the underlying mechanism.
  *
  * Security posture:
  * - Spawns via execFile (NOT exec / shell): argv is passed as a token array,
@@ -135,15 +135,15 @@ function resolveCliPath(config?: PluginConfig): string {
 	if (found) return found;
 
 	throw new Error(
-		'findmy not found on PATH. Install with: brew install omarshahine/tap/findmy-cli\n' +
-			'Or set FINDMY_CLI_PATH or configure cliPath in plugin settings.'
+		'findmy not found on PATH. Build LPFchan/findmy-cli from source, then set ' +
+			'FINDMY_CLI_PATH or configure cliPath to its bin/findmy.'
 	);
 }
 
 export default definePluginEntry({
 	id: 'findmy-cli',
 	name: 'Find My',
-	description: 'Query Find My friend locations on macOS via UI scraping',
+	description: 'Query Find My friend locations on macOS via Accessibility',
 
 	register(api) {
 		const config = api.pluginConfig as PluginConfig | undefined;
@@ -185,8 +185,8 @@ export default definePluginEntry({
 						const args = tool.buildArgs(params);
 						const { stdout } = await execFileAsync(cliPath, args, {
 							encoding: 'utf8',
-							// FindMy.app capture is slow on cold boot — it has to launch,
-							// switch tabs, render the sidebar, and OCR a screenshot.
+							// FindMy.app can be slow on cold boot while it launches,
+							// switches tabs, and populates its Accessibility tree.
 							timeout: 60_000,
 							maxBuffer: 4 * 1024 * 1024,
 						});

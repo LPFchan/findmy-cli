@@ -1,8 +1,12 @@
 # Find My
 
-OpenClaw plugin for macOS Find My friend locations. It shells out to the `findmy` binary, which drives FindMy.app via screen capture and Apple's Vision OCR, then returns each person's name, coarse location, staleness, and distance. Read-only: it never mutates FindMy.app state.
+OpenClaw plugin for macOS Find My friend locations. It shells out to the
+`findmy` binary, which reads FindMy.app through macOS Accessibility, then
+returns each person's name, coarse location, staleness, and distance. The two
+plugin tools are read-only.
 
-**macOS only.** Requires Screen Recording permission granted to the host process.
+**macOS only.** Requires Accessibility permission granted to the
+`findmy-helper` executable used by the configured CLI.
 
 ## Privacy & consent
 
@@ -27,16 +31,18 @@ setups where someone other than the account owner could query a friend's locatio
 
 ## Install
 
-1. Install the plugin from ClawHub.
-2. Install the CLI it depends on:
+Build the fork and point the plugin at that binary:
 
-   ```bash
-   brew install omarshahine/tap/findmy-cli
-   ```
+```bash
+git clone https://github.com/LPFchan/findmy-cli.git
+cd findmy-cli
+make
+export FINDMY_CLI_PATH="$PWD/bin/findmy"
+```
 
-3. Grant **Screen Recording** to the host process running this plugin
-   (System Settings → Privacy & Security → Screen Recording). Without it,
-   FindMy.app captures come back blank.
+Grant **Accessibility** to this checkout's `bin/findmy-helper` in System
+Settings → Privacy & Security → Accessibility. This fork is not published to
+Homebrew or ClawHub.
 
 ## Tools
 
@@ -81,16 +87,14 @@ confirmation before acting on it.
 - **`staleness: "Paused"`** means the friend paused sharing. The location is the last known position, possibly hours or days old. Lead with this when reporting.
 - **Stale timestamps** (`"7 hr. ago"`) mean the device has not checked in recently (phone off, low-power mode, or no signal).
 - **Focus steal**: each call briefly raises FindMy.app to the foreground.
-- **Back-to-back races**: two calls within ~5 seconds can fail. Space them out.
 
-## How it works (scanner note)
+## How it works
 
-This plugin reads friend locations by raising FindMy.app to the foreground,
-screenshotting its window, running Apple Vision OCR on the image, and parsing
-the text. The behavior may look unusual to a static scanner (screen capture,
-OCR, UI scraping), but it is the only path to friend location data since Apple
-exposes no public API for it. The plugin does not click, type into, or mutate
-FindMy.app, and it initiates no network traffic. All data stays on-device.
+This plugin raises FindMy.app, switches to the People tab, and parses accessible
+sidebar text. It does not capture the screen. The plugin exposes no mutating
+tool; the CLI's separate device-only `play-sound` command remains a dry run
+unless a human explicitly supplies `--confirm`. Confirmed actions freshly
+resolve and verify the exact selected device inside one helper process.
 
 ## License
 

@@ -3,12 +3,9 @@ package findmy
 import (
 	"encoding/json"
 	"fmt"
-	"image"
-	_ "image/png"
 	"io"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
@@ -141,99 +138,17 @@ func (e WatchEvent) Human() string {
 func pollOnce(kind WatchKind) ([]watchRecord, error) {
 	switch kind {
 	case WatchPeople:
-		w, err := PreparePeople()
-		if err != nil {
-			return nil, err
-		}
-		shot, lines, sidebarRightPx, textColMinPx, err := captureOCR(w, "people")
-		defer os.Remove(shot)
-		if err != nil {
-			return nil, err
-		}
-		if err := RequireSidebarVisible(lines, sidebarRightPx, "People"); err != nil {
-			return nil, err
-		}
-		return recordsForPeople(ParsePeople(lines, sidebarRightPx, textColMinPx)), nil
+		people, err := ReadPeopleAX()
+		return recordsForPeople(people), err
 	case WatchDevices:
-		w, err := PrepareDevices()
-		if err != nil {
-			return nil, err
-		}
-		shot, lines, sidebarRightPx, textColMinPx, err := captureOCR(w, "devices")
-		defer os.Remove(shot)
-		if err != nil {
-			return nil, err
-		}
-		if err := RequireSidebarVisible(lines, sidebarRightPx, "Devices"); err != nil {
-			return nil, err
-		}
-		return recordsForDevices(ParseDevices(lines, sidebarRightPx, textColMinPx)), nil
+		devices, err := ReadDevicesAX()
+		return recordsForDevices(devices), err
 	case WatchItems:
-		w, err := PrepareItems()
-		if err != nil {
-			return nil, err
-		}
-		shot, lines, sidebarRightPx, textColMinPx, err := captureOCR(w, "items")
-		defer os.Remove(shot)
-		if err != nil {
-			return nil, err
-		}
-		if err := RequireSidebarVisible(lines, sidebarRightPx, "Items"); err != nil {
-			return nil, err
-		}
-		return recordsForItems(ParseItems(lines, sidebarRightPx, textColMinPx)), nil
+		items, err := ReadItemsAX()
+		return recordsForItems(items), err
 	default:
 		return nil, fmt.Errorf("unknown watch kind %q", kind)
 	}
-}
-
-func captureOCR(w *Window, stem string) (string, []TextLine, int, int, error) {
-	shot := filepath.Join(watchTmpDir(), fmt.Sprintf("watch-%s.png", stem))
-	if err := Capture(w, shot); err != nil {
-		return shot, nil, 0, 0, err
-	}
-	lines, err := OCR(shot)
-	if err != nil {
-		return shot, nil, 0, 0, err
-	}
-	sidebarRightPx, textColMinPx := watchPixelLayout(w, shot)
-	return shot, lines, sidebarRightPx, textColMinPx, nil
-}
-
-func watchTmpDir() string {
-	d := "/tmp/findmy-cli"
-	_ = os.MkdirAll(d, 0o755)
-	return d
-}
-
-func watchPixelLayout(w *Window, imagePath string) (sidebarRightPx, textColMinPx int) {
-	scale := watchImageScale(w, imagePath)
-	return int(340 * scale), int(80 * scale)
-}
-
-func watchImageScale(w *Window, imagePath string) float64 {
-	scale := 2.0
-	if info, err := watchImageSize(imagePath); err == nil && w.Width > 0 {
-		if s := float64(info.W) / float64(w.Width); s >= 1 {
-			scale = s
-		}
-	}
-	return scale
-}
-
-type watchImageInfo struct{ W, H int }
-
-func watchImageSize(path string) (watchImageInfo, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return watchImageInfo{}, err
-	}
-	defer f.Close()
-	cfg, _, err := image.DecodeConfig(f)
-	if err != nil {
-		return watchImageInfo{}, err
-	}
-	return watchImageInfo{W: cfg.Width, H: cfg.Height}, nil
 }
 
 type watchRecord struct {

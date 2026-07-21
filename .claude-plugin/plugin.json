@@ -1,19 +1,18 @@
 {
   "name": "openclaw-findmy",
   "version": "0.3.1",
-  "description": "Query Find My friend locations via macOS FindMy.app UI scraping. Bundles the findmy Go CLI and Swift Vision/CoreGraphics helper. Use when the user asks where someone is or wants a location refresh.",
+  "description": "Query Find My friend locations through the macOS Accessibility tree. Bundles the findmy Go CLI and Swift Accessibility helper. Use when the user asks where someone is or wants a location refresh.",
   "author": {
     "name": "Omar Shahine"
   },
   "license": "MIT",
-  "homepage": "https://github.com/omarshahine/findmy-cli",
-  "repository": "https://github.com/omarshahine/findmy-cli",
+  "homepage": "https://github.com/LPFchan/findmy-cli",
+  "repository": "https://github.com/LPFchan/findmy-cli",
   "keywords": [
     "findmy",
     "macos",
     "location",
-    "ocr",
-    "vision",
-    "screen-scraping"
+    "accessibility",
+    "ax"
   ]
 }
