@@ -122,3 +122,42 @@ func TestResolveDeviceTierPrecedenceAndSeparatorFallback(t *testing.T) {
 		t.Fatalf("ResolveDevice partial tier = %#v, %v", partial, err)
 	}
 }
+
+func TestParseAXRowsRejectsSignedOutInstructions(t *testing.T) {
+	for _, prompts := range [][]string{
+		{"Sign in to locate your Mac and other devices.", "To locate your devices, Find My must have iCloud enabled in System Settings."},
+		{"Sign In", "Start sharing your location with friends or family members."},
+	} {
+		t.Run(prompts[0], func(t *testing.T) {
+			tree := testAXTree(nil)
+			windowParent := "0"
+			tree.Nodes = append(tree.Nodes, AXNode{Path: "0.1", ParentPath: &windowParent, Role: "AXGroup", Selected: boolPtr(false)})
+			parent := "0.1"
+			for i, prompt := range prompts {
+				tree.Nodes = append(tree.Nodes, AXNode{
+					Path: "0.1." + string(rune('0'+i)), ParentPath: &parent,
+					Role: "AXStaticText", Description: prompt,
+					Frame: &AXFrame{X: 210, Y: float64(205 + i*90), Width: 218, Height: 78},
+				})
+			}
+			rows, err := ParseAXRows(tree)
+			if err == nil || !strings.Contains(err.Error(), "Apple Account sign-in") || rows != nil {
+				t.Fatalf("signed-out screen returned rows=%#v, err=%v", rows, err)
+			}
+		})
+	}
+}
+
+func TestParseAXRowsPreservesDevicesNamedLikeSignInPrompts(t *testing.T) {
+	for _, values := range [][]string{
+		{"Sign In", "Seoul • Now"},
+		{"Sign in to locate your Mac and other devices.", "To locate your devices, Find My must have iCloud enabled in System Settings."},
+	} {
+		name := values[0]
+		tree := testAXTree([][]string{values})
+		rows, err := ParseAXRows(tree)
+		if err != nil || len(rows) != 1 || rows[0].Name != name {
+			t.Fatalf("device %q returned rows=%#v, err=%v", name, rows, err)
+		}
+	}
+}
