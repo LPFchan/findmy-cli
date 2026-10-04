@@ -32,6 +32,10 @@ func main() {
 		runItems(os.Args[2:])
 	case "item":
 		runItem(os.Args[2:])
+	case "ring", "phone":
+		runRing(os.Args[1], os.Args[2:])
+	case "alias":
+		runAlias(os.Args[2:])
 	case "play-sound":
 		runPlaySound(os.Args[2:])
 	case "watch":
@@ -57,6 +61,9 @@ Usage:
   findmy items   [--json] [--no-log]
   findmy item    <name> [--json]
   findmy play-sound <device> [--confirm] [--json]
+  findmy ring <device|alias> [--confirm] [--json]
+  findmy phone [device|alias] [--confirm] [--json]
+  findmy alias [<name> <device> | --delete <name>]
   findmy watch   <people|devices|items> [--interval=5m] [--diff] [--json] [--once]
   findmy log     <name> [--kind=people|devices|items] [--since=DURATION] [--until=DURATION] [--limit=N] [--json]
 
@@ -747,6 +754,108 @@ func emitJSON(v any) {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(v)
+}
+
+// ringArgs resolves upstream aliases before using the fork's confirmed AX action.
+func ringArgs(command string, args []string) ([]string, error) {
+	defaultPhone := command == "phone"
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, "-") {
+			defaultPhone = false
+		}
+	}
+	if defaultPhone {
+		args = append(append([]string{}, args...), "phone")
+	}
+	opts, err := parsePlaySoundOpts(args)
+	if err != nil {
+		return nil, err
+	}
+	target, err := findmy.ResolveAlias(opts.device)
+	if err != nil {
+		return nil, err
+	}
+	if defaultPhone && target == "phone" {
+		return nil, fmt.Errorf("no phone alias set; run: findmy alias phone <device>")
+	}
+	result := []string{target}
+	if opts.confirm {
+		result = append(result, "--confirm")
+	}
+	if opts.json {
+		result = append(result, "--json")
+	}
+	return result, nil
+}
+
+func runRing(command string, args []string) {
+	resolved, err := ringArgs(command, args)
+	must(err)
+	runPlaySound(resolved)
+}
+
+// runAlias manages the name shortcuts in ~/.config/findmy-cli/aliases.json.
+func runAlias(args []string) {
+	_, rest := parseOpts(args)
+	m, err := findmy.LoadAliases()
+	must(err)
+
+	for i, a := range rest {
+		if a != "--delete" && a != "-delete" {
+			continue
+		}
+		if i+1 >= len(rest) {
+			fmt.Fprintln(os.Stderr, "usage: findmy alias --delete <name>")
+			os.Exit(2)
+		}
+		name := rest[i+1]
+		key := strings.ToLower(name)
+		found := false
+		for k := range m {
+			if strings.ToLower(k) == key {
+				delete(m, k)
+				found = true
+			}
+		}
+		if !found {
+			fmt.Fprintf(os.Stderr, "alias %q not found\n", name)
+			os.Exit(1)
+		}
+		must(findmy.SaveAliases(m))
+		fmt.Printf("deleted alias %q\n", name)
+		return
+	}
+
+	if len(rest) == 0 {
+		if len(m) == 0 {
+			fmt.Fprintln(os.Stderr, "no aliases set. Add one: findmy alias phone \"Omar's iPhone\"")
+			return
+		}
+		names := make([]string, 0, len(m))
+		for k := range m {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		for _, k := range names {
+			fmt.Printf("%s -> %s\n", k, m[k])
+		}
+		return
+	}
+
+	if len(rest) < 2 {
+		fmt.Fprintln(os.Stderr, "usage: findmy alias <name> <device>")
+		os.Exit(2)
+	}
+	name := rest[0]
+	device := strings.Join(rest[1:], " ")
+	for k := range m {
+		if strings.EqualFold(k, name) {
+			delete(m, k)
+		}
+	}
+	m[name] = device
+	must(findmy.SaveAliases(m))
+	fmt.Printf("%s -> %s\n", name, device)
 }
 
 func must(err error) {
