@@ -112,6 +112,13 @@ installs. The CLI auto-detects the current macOS language for the supported
 FindMy.app strings, and `FINDMY_LANG=fr` can be used to force a locale for
 testing.
 
+## Persistent server
+
+The optional [Find My MCP server](mcp/README.md) serves location queries to
+agents on other machines through authenticated, private Streamable HTTP. It
+starts with the logged-in macOS session, restarts on exit, and exposes no ringing
+tool. See its deployment guide for Dumpling.
+
 ## Required macOS permissions
 
 Grant **Accessibility** to the built or installed `findmy-helper` executable:

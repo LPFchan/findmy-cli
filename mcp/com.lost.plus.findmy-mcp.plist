@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.lost.plus.findmy-mcp</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__HOME__/.local/bin/findmy-mcp</string>
+    <string>--listen</string><string>127.0.0.1:8786</string>
+    <string>--token-file</string><string>__HOME__/.config/findmy-mcp/token</string>
+    <string>--public-host</string><string>dumpling.tailaa113.ts.net:8443</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key><string>__HOME__</string>
+    <key>PATH</key><string>__HOME__/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>FINDMY_HELPER</key><string>__HOME__/.local/bin/findmy-helper</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>ProcessType</key><string>Interactive</string>
+  <key>LimitLoadToSessionType</key><string>Aqua</string>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/findmy-mcp.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/findmy-mcp.log</string>
+</dict>
+</plist>
