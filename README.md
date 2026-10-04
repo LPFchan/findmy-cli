@@ -72,6 +72,11 @@ findmy play-sound "Omar's iPhone" --json
 # Explicitly activate Play Sound after reviewing the unique match.
 findmy play-sound "Omar's iPhone" --confirm
 
+# Save an alias, preview its device, then explicitly play sound.
+findmy alias phone "Omar's iPhone"
+findmy ring phone
+findmy phone --confirm
+
 # List items in the sidebar.
 findmy items
 findmy items --json
@@ -84,6 +89,10 @@ findmy item "AirPods Pro" --json
 findmy log "Omar Shahine" --since=24h
 findmy log "Omar's iPhone" --kind=devices --limit=10 --json
 ```
+
+`ring` and `phone` use the same Accessibility action and confirmation gate as
+`play-sound`. Without `--confirm`, they only preview the matched device.
+Aliases are stored in `~/.config/findmy-cli/aliases.json`.
 
 Confirmation does not reuse the dry-run tree. The helper selects the Devices
 tab, resolves one exact device row from a fresh AX tree, selects it, rebuilds

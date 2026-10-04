@@ -415,8 +415,7 @@ func ReadAXDetail(tabLabel, target string) (precise, city, region, postal string
 			Width: int(node.Frame.Width), Height: int(node.Frame.Height),
 		})
 	}
-	precise, city, region, postal = ExtractDetailPaneAddress(lines, sidebarRight)
-	return precise, city, region, postal, nil
+	return ExtractDetailPaneAddress(lines, sidebarRight, target)
 }
 
 func ReadDeviceDetail(device Device) (precise, city, region, postal string, err error) {

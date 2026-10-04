@@ -171,3 +171,53 @@ func TestParseWatchOptsRejectsNonPositiveInterval(t *testing.T) {
 		})
 	}
 }
+
+func TestRingAliasesKeepConfirmationGate(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := findmy.SaveAliases(map[string]string{"phone": "My iPhone"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{"ring", "phone"} {
+		args := []string{"PHONE", "--json"}
+		if command == "phone" {
+			args = []string{"--json"}
+		}
+		resolved, err := ringArgs(command, args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		opts, err := parsePlaySoundOpts(resolved)
+		if err != nil || opts.device != "My iPhone" || opts.confirm || !opts.json {
+			t.Fatalf("opts=%#v err=%v", opts, err)
+		}
+		called := false
+		result, err := executePlaySound(opts,
+			func() ([]findmy.Device, error) { return []findmy.Device{{Name: "My iPhone"}}, nil },
+			func(findmy.Device) error { called = true; return nil })
+		if err != nil || called || !result.DryRun {
+			t.Fatalf("result=%#v called=%v err=%v", result, called, err)
+		}
+	}
+	resolved, err := ringArgs("phone", []string{"Work Phone", "--confirm"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts, err := parsePlaySoundOpts(resolved)
+	if err != nil || opts.device != "Work Phone" || !opts.confirm {
+		t.Fatalf("opts=%#v err=%v", opts, err)
+	}
+}
+
+func TestRingRejectsMissingAliasAndUnknownFlags(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	for _, tc := range []struct {
+		command string
+		args    []string
+	}{
+		{"phone", nil}, {"phone", []string{"--force"}}, {"ring", nil}, {"ring", []string{"Phone", "--force"}},
+	} {
+		if _, err := ringArgs(tc.command, tc.args); err == nil {
+			t.Fatalf("accepted %#v", tc)
+		}
+	}
+}
