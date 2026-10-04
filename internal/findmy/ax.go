@@ -81,6 +81,11 @@ func prepareAXTab(tab string) (AXTree, error) {
 	}
 	time.Sleep(300 * time.Millisecond)
 	if err := SwitchTab(tab); err != nil {
+		if tree, readErr := ReadAXTree(); readErr == nil {
+			if signInErr := checkAXSignIn(tree); signInErr != nil {
+				return AXTree{}, signInErr
+			}
+		}
 		return AXTree{}, fmt.Errorf("select %s tab: %w", tab, err)
 	}
 	time.Sleep(700 * time.Millisecond)
@@ -152,6 +157,9 @@ type axText struct {
 }
 
 func ParseAXRows(tree AXTree) ([]AXRecord, error) {
+	if err := checkAXSignIn(tree); err != nil {
+		return nil, err
+	}
 	window := mainAXWindow(tree.Nodes)
 	if window == nil || window.Frame == nil {
 		return nil, fmt.Errorf("Find My Accessibility tree has no main window")
@@ -188,6 +196,46 @@ func ParseAXRows(tree AXTree) ([]AXRecord, error) {
 		return nil, fmt.Errorf("Find My sidebar Accessibility text could not be grouped into records")
 	}
 	return rows, nil
+}
+
+// Signed-out instructions are static text in the window, outside device rows.
+// Match the observed screen copy rather than treating a device name as a prompt.
+func checkAXSignIn(tree AXTree) error {
+	window := mainAXWindow(tree.Nodes)
+	if window == nil {
+		return nil
+	}
+	byPath := make(map[string]AXNode, len(tree.Nodes))
+	for _, node := range tree.Nodes {
+		byPath[node.Path] = node
+	}
+	groups := make(map[string]map[string]bool)
+	for _, node := range tree.Nodes {
+		if node.Role != "AXStaticText" || node.Frame == nil || node.Frame.Width <= 0 || node.Frame.Height <= 0 ||
+			!strings.HasPrefix(node.Path, window.Path+".") || node.ParentPath == nil {
+			continue
+		}
+		if rowPath := nearestRowPath(node.Path, byPath); rowPath != "" {
+			row := byPath[rowPath]
+			// Generic window groups can expose AXSelected=false too.
+			if row.Role != "AXGroup" || containsAXAction(row.Actions) {
+				continue
+			}
+		}
+		parent := *node.ParentPath
+		if groups[parent] == nil {
+			groups[parent] = make(map[string]bool)
+		}
+		groups[parent][strings.ToLower(firstAXText(node))] = true
+	}
+	for _, texts := range groups {
+		if (texts["sign in to locate your mac and other devices."] &&
+			texts["to locate your devices, find my must have icloud enabled in system settings."]) ||
+			(texts["sign in"] && texts["start sharing your location with friends or family members."]) {
+			return fmt.Errorf("Find My requires Apple Account sign-in with iCloud enabled; open System Settings and sign in before querying locations")
+		}
+	}
+	return nil
 }
 
 func mainAXWindow(nodes []AXNode) *AXNode {

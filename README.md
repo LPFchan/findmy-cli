@@ -121,6 +121,9 @@ tool. See its deployment guide for Dumpling.
 
 ## Required macOS permissions
 
+Find My must be signed in to your Apple Account with iCloud enabled. The CLI reports a sign-in error for the English signed-out screen rather than treating its instructions as location records.
+
+
 Grant **Accessibility** to the built or installed `findmy-helper` executable:
 Settings → Privacy & Security → Accessibility. Screen Recording is not
 required. Verify the exact helper binary after building:
