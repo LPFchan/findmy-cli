@@ -771,7 +771,10 @@ func ringArgs(command string, args []string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	target := findmy.ResolveAlias(opts.device)
+	target, err := findmy.ResolveAlias(opts.device)
+	if err != nil {
+		return nil, err
+	}
 	if defaultPhone && target == "phone" {
 		return nil, fmt.Errorf("no phone alias set; run: findmy alias phone <device>")
 	}
@@ -794,7 +797,8 @@ func runRing(command string, args []string) {
 // runAlias manages the name shortcuts in ~/.config/findmy-cli/aliases.json.
 func runAlias(args []string) {
 	_, rest := parseOpts(args)
-	m := findmy.LoadAliases()
+	m, err := findmy.LoadAliases()
+	must(err)
 
 	for i, a := range rest {
 		if a != "--delete" && a != "-delete" {

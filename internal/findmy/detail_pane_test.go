@@ -198,3 +198,16 @@ func TestMatchesEntityHeader(t *testing.T) {
 		}
 	}
 }
+
+func TestDetailPaneSkipsMapLabelBeforeAlignedAddress(t *testing.T) {
+	lines := []TextLine{
+		{Text: "Omar Shahine", X: 760, Y: 100},
+		{Text: "Coffee Shop", X: 1000, Y: 120},
+		{Text: "10001 NE 8th St", X: 760, Y: 155},
+		{Text: "Bellevue, WA 98004", X: 760, Y: 185},
+	}
+	precise, city, region, postal, err := ExtractDetailPaneAddress(lines, 680, "Omar Shahine")
+	if err != nil || precise != "10001 NE 8th St" || city != "Bellevue" || region != "WA" || postal != "98004" {
+		t.Fatalf("address=(%q,%q,%q,%q) err=%v", precise, city, region, postal, err)
+	}
+}

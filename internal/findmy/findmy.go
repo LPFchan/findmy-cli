@@ -601,6 +601,9 @@ func ExtractDetailPaneAddress(lines []TextLine, sidebarRightPx int, entityName s
 		// header's is map furniture no matter how much it reads like a
 		// street ("WAREHAM LN", "BULL RUN RD").
 		if abs(l.X-headerX) > detailPaneColumnTolerancePx {
+			if len(addressLines) == 0 {
+				continue
+			}
 			break
 		}
 		// The first address line is held to the same shape test as the rest.
